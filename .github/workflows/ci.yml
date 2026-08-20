@@ -1,5 +1,6 @@
-# Build + test on both operating systems the app runs on, so the macOS and
-# Windows versions can never drift apart silently (M8 of the Windows port).
+# Build + test the Windows instance on a Windows runner (M8 of the Windows
+# port). The matrix is left in place so macos-latest can be added again if the
+# two instances ever share a repo.
 #
 # Infra comes from scripts/infra.mjs (native Postgres 16 + Redis on the same
 # ports/credentials as docker-compose), so DATABASE_URL/REDIS_URL are identical
@@ -18,7 +19,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest]
+        os: [windows-latest]   # this repo is the Windows instance; the Mac instance lives in claurealex-cyber/tenant-ai
     env:
       DATABASE_URL: postgresql://tenant_ai:tenant_ai@localhost:5433/tenant_ai
       REDIS_URL: redis://localhost:6380
@@ -39,9 +40,6 @@ jobs:
       # Same native Postgres 16 + Redis the Windows launcher uses (scripts/infra.mjs):
       # Postgres binaries come with `npm ci` (embedded-postgres), Redis is
       # downloaded on Windows and comes from brew on macOS. No Docker on either runner.
-      - name: Install Redis (macOS)
-        if: runner.os == 'macOS'
-        run: brew install redis
       - name: Start native infra (postgres + redis on the compose ports)
         run: |
           node scripts/infra.mjs install redis

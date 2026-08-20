@@ -2,7 +2,9 @@
 
 State as of **2026-08-20** on the Windows 11 Home machine (`DESKTOP-5FGSUVG`,
 x64, 12 GB RAM, Node 24.17, npm 11.13). Working copy: `C:\Users\staff\src\tenant-ai`,
-branch `windows-port` on top of `origin/main`. Plan + status with evidence:
+branch `main` of **github.com/claurealex-cyber/tenant-ai-windows** (this is the
+Windows instance's own repo; the Mac instance stays in `…/tenant-ai`, kept as the
+`mac` remote here for cherry-picking shared fixes). Plan + status with evidence:
 <https://claude.ai/code/artifact/8877bfe1-8b70-40ec-9045-9d05dbb27305>
 
 Docs for how the Windows build works: `README-WINDOWS.md`.

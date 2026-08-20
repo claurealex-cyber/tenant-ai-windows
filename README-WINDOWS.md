@@ -40,7 +40,7 @@ Add-MpPreference -ExclusionPath "$HOME\src\tenant-ai"
 Then, as a normal user:
 
 ```powershell
-git clone https://github.com/claurealex-cyber/tenant-ai $HOME\src\tenant-ai
+git clone https://github.com/claurealex-cyber/tenant-ai-windows $HOME\src\tenant-ai   # Windows instance (the Mac one is …/tenant-ai)
 cd $HOME\src\tenant-ai
 Copy-Item .env.example .env          # fill in secrets; PII_ENCRYPTION_KEY = 64 hex chars
 npm ci                               # also brings the Postgres 16 binaries (embedded-postgres)
