@@ -23,7 +23,11 @@
     "infra:install": "node scripts/infra.mjs install",
     "infra:up": "node scripts/infra.mjs up",
     "infra:down": "node scripts/infra.mjs down",
-    "infra:status": "node scripts/infra.mjs status"
+    "infra:status": "node scripts/infra.mjs status",
+    "stress:soak": "node scripts/stress/soak.mjs",
+    "stress:soak:report": "node scripts/stress/soak.mjs --report",
+    "win:autostart": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/win/install-autostart.ps1",
+    "win:autostart:status": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/win/install-autostart.ps1 -Status"
   },
   "devDependencies": {
     "embedded-postgres": "^16.14.0-beta.17",

@@ -133,9 +133,35 @@ first run report 3 instead of 2; every run after that passes.
 
 ## Always-on (M7)
 
-* Power plan: never sleep on AC, lid-close does nothing, Fast Startup off.
-* Windows Update: set Active Hours; after any reboot the Task Scheduler job
-  below brings everything back.
-* Task Scheduler: *At log on* → `start.cmd --no-open` (restart on failure).
-* Firewall: accept the `node.exe` private-network prompt once.
-* External monitor on `https://<tunnel>/health/deep` every 5 minutes.
+```powershell
+npm run win:autostart            # registers the tasks (no UAC) + one UAC prompt for the power settings
+npm run win:autostart:status     # task state / last result, Fast Startup, sleep timeout
+npm run win:autostart -- -WithSoak   # also record a soak sample every 60 s at sign-in
+npm run win:autostart -- -Uninstall
+```
+
+* **Task Scheduler "Tenant AI"** — *At log on* of this user (20 s delay), runs
+  `scripts\win\autostart.ps1` hidden: the launcher (`--no-open`) in a
+  crash-restart loop. Launcher exits non-zero (a server died, infra failed) →
+  restart with backoff (5 s, 10 s, … max 5 min, ≤10/hour); exits 0 (Ctrl-C,
+  takeover, stop-file) → the supervisor stands down. `launch.mjs` now treats
+  any one server dying as a failure of the whole stack and exits 1, so the
+  three never run half-up. Log: `.local\log\launcher.log` (rotated at 20 MB).
+* **Relaunch = restart still works**: double-click `start.cmd` and the hidden
+  instance hands over to the visible window; the task shows `Ready` again.
+  `Start-ScheduledTask -TaskName 'Tenant AI'` tests it without signing out;
+  `Set-Content .launcher.stop 1` stops whatever is running.
+* **Machine settings** (the UAC half of the installer): Fast Startup off —
+  otherwise "shut down" is a hibernate and the at-logon task isn't re-run
+  cleanly — never sleep/hibernate on AC, lid close does nothing.
+* **Soak recorder** `npm run stress:soak` (or the `Tenant AI soak` task):
+  one JSON line per minute to `parity\win32\soak.jsonl` — `/health` status,
+  DB/Redis flags, API uptime (restart = uptime reset), `/health/deep` latency,
+  RSS of the three servers, infra status, free RAM. `npm run stress:soak:report`
+  prints uptime %, restarts, latency percentiles, RSS min/max and every
+  incident window. The 72 h gate = report with 0 restarts and no incidents
+  that weren't deliberate.
+* Still manual: Windows Update Active Hours; accept the `node.exe`
+  private-network firewall prompt once; an external monitor on
+  `https://<tunnel>/health/deep` every 5 minutes; and one real reboot
+  (`shutdown /r /t 0`, sign in, touch nothing) to prove recovery.

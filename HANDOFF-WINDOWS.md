@@ -39,13 +39,15 @@ No admin rights, no services, nothing under Program Files; all state in
 | M4 launcher | **passed** | `parity/win32/relaunch-loop-native.txt` — **5/5 takeovers clean** through the real launcher on native infra (healthy in 7–8 s, one listener per port, 0 orphans, infra untouched); earlier no-infra run 3/3 |
 | M5 Mac-only features | **done** | RelayTransport gate + tests; admin banner |
 | M6 end-to-end parity | not started (needs Twilio/Telnyx/Stripe/Plaid keys + `PUBLIC_URL`) | harness ready |
-| M7 soak | not started — now unblocked | checklist in README-WINDOWS.md; autostart = Task Scheduler "at log on → `start.cmd --no-open`" (no Docker sign-in dependency any more) |
+| M7 soak | **plumbing done**, 72 h run pending | `npm run win:autostart` → Task Scheduler "Tenant AI" (at log on, hidden, crash-restart loop via `scripts/win/autostart.ps1`) + "Tenant AI soak" (`scripts/stress/soak.mjs`, 1 sample/min → `parity/win32/soak.jsonl`, `--report`). Verified: task start → healthy in 40 s; API killed → launcher exits 1 → supervisor restarts the stack (5 s) → healthy; foreground `start.cmd` takeover → supervisor stands down (task `Ready`). Power settings (Fast Startup off, never sleep) need the UAC half of the installer. Still to do: one real reboot + the 72 h recording |
 | M8 sign-off + CI | partial | `.github/workflows/ci.yml` uses `infra.mjs` on both runners (Postgres + Redis, no Docker); not pushed; no Mac baseline for `parity-diff` |
 
 ## What changed in this branch (all cross-platform, Mac behavior unchanged)
 
 - **`scripts/infra.mjs`** (new) — native infra manager; `scripts/lib/start-detached.ps1` (Windows: `CreateProcess` with `bInheritHandles=false` so services never inherit a parent pipe — Node's `spawn` would, and a CI runner / PowerShell pipe then hangs until the service dies); `scripts/lib/dotenv.mjs` shared `.env` reader; root `embedded-postgres` devDependency; `npm run infra*` scripts; `.local/` gitignored.
-- `scripts/launch.mjs` + `start.cmd` + `start.ps1` — one launcher for both OSes; `--infra=native|docker|none` (default native on Windows, docker elsewhere; `--no-docker` = `--infra=none`).
+- `scripts/launch.mjs` + `start.cmd` + `start.ps1` — one launcher for both OSes; `--infra=native|docker|none` (default native on Windows, docker elsewhere; `--no-docker` = `--infra=none`); any server dying now stops the stack with exit 1 (so a supervisor restarts all three together).
+- **`scripts/win/autostart.ps1`** (crash-restart supervisor, UTF-8 log in `.local/log/launcher.log`) + **`scripts/win/install-autostart.ps1`** (Task Scheduler tasks, power settings via one UAC prompt; `-Status`, `-Uninstall`, `-WithSoak`); `npm run win:autostart*`.
+- **`scripts/stress/soak.mjs`** — soak recorder + `--report`; `npm run stress:soak`, `stress:soak:report`.
 - `scripts/stress/chaos.ps1` — infra-aware (`-Infra native|docker|auto`); `infra-restart` scenario (native: all services down/up; docker: Docker Desktop restart).
 - `apps/server/src/lib/load-env.ts` — server loads root `.env` itself (never overrides shell vars). `scripts/with-env.mjs` for root `npm run db:*`.
 - `apps/server/src/lib/graceful-shutdown.ts` — IPC `{type:"shutdown"}` + stdin-close triggers (Windows has no SIGTERM); `requestShutdown()` for tests/harness.
@@ -70,7 +72,14 @@ powershell -ExecutionPolicy Bypass -File scripts\stress\relaunch-loop.ps1 -Cycle
 powershell -ExecutionPolicy Bypass -File scripts\stress\chaos.ps1 -Scenario all   # while the app serves + http-load runs
 node scripts\stress\http-load.mjs --url http://127.0.0.1:3001/health/deep --connections 50 --duration 30
 
-# Then: M0 on the Mac → parity\mac\ ; npm run stress:parity ; push branch so CI runs both OSes ; M6 with keys ; M7 soak
+# Always-on (M7)
+npm run win:autostart            # tasks + (UAC) power settings; npm run win:autostart:status to check
+Start-ScheduledTask -TaskName 'Tenant AI'      # test without signing out; Set-Content .launcher.stop 1 to stop
+npm run stress:soak              # or let the "Tenant AI soak" task record; npm run stress:soak:report after 72 h
+
+# Then: one real reboot (sign in, touch nothing, expect /health ok) ; push so CI runs ; M6 with keys ; 72 h soak report
+# (This Windows box and the Mac are separate instances — no parity work on the Mac is planned; the macOS CI job only
+#  guards that shared code still runs there.)
 ```
 
 Known quirk: on a freshly seeded DB, `billing-cycle.test.ts` reports 3 invoices

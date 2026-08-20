@@ -418,8 +418,12 @@ async function shutdownAll(reason, code = 0) {
 
 for (const c of children) {
   c.proc.on("exit", (code, signal) => {
-    if (!stopping) log(`! ${c.name} exited (${signal || code})`);
-    if (children.every((x) => x.proc.exitCode !== null || x.proc.signalCode !== null)) shutdownAll("all servers exited", code || 0);
+    if (stopping) return;
+    // One server dying is a failure of the whole stack: stop the others and
+    // exit non-zero so a supervisor (scripts/win/autostart.ps1, Task Scheduler,
+    // launchd) restarts everything together instead of leaving a half-up app.
+    log(`! ${c.name} exited unexpectedly (${signal || code}) — stopping the stack`);
+    shutdownAll(`${c.name} exited`, 1);
   });
 }
 
