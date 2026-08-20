@@ -100,6 +100,22 @@ the API port (3001 → 3005–3008), waits for Postgres, `prisma migrate deploy`
 set and ngrok is installed, opens the dashboard, and serves. Flags for
 automation: `--no-build --no-ngrok --no-open --infra=native|docker|none`.
 
+### Public URL (ngrok) for this instance
+
+```powershell
+ngrok config add-authtoken <token>                       # https://dashboard.ngrok.com/get-started/your-authtoken
+npm run win:ngrok -- -Domain your-name.ngrok-free.app    # reserve it at https://dashboard.ngrok.com/domains
+```
+
+`win:ngrok` stores nothing but `PUBLIC_URL=https://<domain>` in `.env`, then
+proves `https://<domain>/health` answers through a test tunnel. From then on
+every launch (shortcut, `start.cmd`, the sign-in task) starts the tunnel; a
+localhost `PUBLIC_URL` means "no tunnel". This instance needs its **own**
+domain and carrier numbers — two ngrok agents can't serve one domain.
+Don't run `ngrok update`: Defender quarantines the self-updated agent
+(`Trojan:Win32/Kepavll!rfn` on 3.39); the winget build (3.3.1) works, and
+the scripts use `--domain=` which every 3.x agent understands.
+
 ## What's different on Windows (and why)
 
 | Area | Mac | Windows |

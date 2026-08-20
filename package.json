@@ -28,7 +28,8 @@
     "stress:soak:report": "node scripts/stress/soak.mjs --report",
     "win:autostart": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/win/install-autostart.ps1",
     "win:autostart:status": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/win/install-autostart.ps1 -Status",
-    "win:shortcut": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/win/make-shortcut.ps1"
+    "win:shortcut": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/win/make-shortcut.ps1",
+    "win:ngrok": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/win/setup-ngrok.ps1"
   },
   "devDependencies": {
     "embedded-postgres": "^16.14.0-beta.17",

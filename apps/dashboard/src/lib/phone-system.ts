@@ -159,7 +159,7 @@ async function ensureTunnel(
   try {
     const child = spawn(
       ngrokBin,
-      ["http", `--url=${domain}`, String(port), "--log=stdout"],
+      ["http", `--domain=${domain}`, String(port), "--log=stdout"],
       // windowsHide: on Windows a detached console app would otherwise pop
       // its own terminal window on the desktop every time this runs.
       { detached: true, stdio: "ignore", windowsHide: true }

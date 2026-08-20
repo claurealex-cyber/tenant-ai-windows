@@ -332,7 +332,9 @@ if (!flag("no-ngrok") && PUBLIC_URL && publicIsLocal) {
     } else {
       log(`▶ Starting ngrok tunnel (${domain} → localhost:${SERVER_PORT})…`);
     }
-    spawn(ngrokBin, ["http", `--url=${domain}`, String(SERVER_PORT), "--log=stdout"], {
+    // --domain (not --url): understood by every ngrok 3.x agent, including the
+    // winget 3.3.1 build — newer self-updated agents get quarantined by Defender.
+    spawn(ngrokBin, ["http", `--domain=${domain}`, String(SERVER_PORT), "--log=stdout"], {
       detached: true, stdio: "ignore", windowsHide: true,
     }).unref();
   }
