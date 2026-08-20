@@ -183,8 +183,16 @@ describe("runBillingCycle", () => {
   it("creates invoices for active subscriptions", async () => {
     const created = await runBillingCycle(billingMonth);
 
-    // Should create invoices for active users (userId + overageUserId), NOT trial
-    expect(created).toBe(2);
+    // runBillingCycle invoices EVERY active subscription in the database, so
+    // the returned total also counts whatever else is active (e.g. the seeded
+    // demo landlord on a fresh DB). Assert on our own subscriptions instead:
+    // active + overage get an invoice, the trial does not.
+    expect(created).toBeGreaterThanOrEqual(2);
+    const ours = await prisma.invoice.findMany({
+      where: { subscriptionId: { in: [subId, trialSubId, overageSubId] }, billingMonth },
+      select: { subscriptionId: true },
+    });
+    expect(ours.map((i) => i.subscriptionId).sort()).toEqual([subId, overageSubId].sort());
   });
 
   it("calculates correct base price (no overage)", async () => {

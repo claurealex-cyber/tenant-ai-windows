@@ -35,14 +35,14 @@ No admin rights, no services, nothing under Program Files; all state in
 | Gate | Status | Evidence |
 |---|---|---|
 | M0 baseline on the Mac | not done (needs the Mac) | — |
-| M1 toolchain + tests | **passed** | `npm ci` clean (no node-gyp), Turbo build 4/4, vitest **1650/1651** on Docker infra (`parity/win32/vitest-docker.json`) and on native infra (`vitest-native.json`, 26 s) — the 1 is the known first-run `billing-cycle` quirk, passes on re-run |
+| M1 toolchain + tests | **passed** | `npm ci` clean (no node-gyp), Turbo build 4/4, vitest **1651/1651** on native infra (`parity/win32/vitest-native.json`, 26 s; also green on Docker infra, `vitest-docker.json`) — the old fresh-DB `billing-cycle` quirk is fixed in the test |
 | M2 infra | **passed (native)** | Docker path verified once post-reboot (compose up, migrate, seed, tests), then replaced by `infra.mjs`: `up` in ≈3 s, migrate + seed on the native Postgres; **chaos all 3 scenarios recovered** (`parity/win32/chaos-native.txt`, postgres-restart re-run with `sawDown=True` in `chaos-native-postgres.txt`); clean load baseline `http-load --spread-ip` 50 conn × 30 s on `/health/deep`: **5,088 req/s, p50 8.8 ms, p99 22.7 ms, 0 errors** (`http-load-native-clean.txt`, `http-load-health-deep.json`) |
 | M3 env + process model | **passed** | `parity/win32/shutdown-drill.txt` — 11/11 clean (ipc/stdin/hard) |
 | M4 launcher | **passed** | `parity/win32/relaunch-loop-native.txt` — **5/5 takeovers clean** through the real launcher on native infra (healthy in 7–8 s, one listener per port, 0 orphans, infra untouched); earlier no-infra run 3/3 |
 | M5 Mac-only features | **done** | RelayTransport gate + tests; admin banner |
 | M6 end-to-end parity | not started (needs Twilio/Telnyx/Stripe/Plaid keys + `PUBLIC_URL`) | harness ready |
 | M7 soak | **plumbing done**, 72 h run pending | `npm run win:autostart` → Task Scheduler "Tenant AI" (at log on, hidden, crash-restart loop via `scripts/win/autostart.ps1`) + "Tenant AI soak" (`scripts/stress/soak.mjs`, 1 sample/min → `parity/win32/soak.jsonl`, `--report`). Verified: task start → healthy in 40 s; API killed → launcher exits 1 → supervisor restarts the stack (5 s) → healthy; foreground `start.cmd` takeover → supervisor stands down (task `Ready`). Power settings (Fast Startup off, never sleep) need the UAC half of the installer. Still to do: one real reboot + the 72 h recording |
-| M8 sign-off + CI | partial | `.github/workflows/ci.yml` uses `infra.mjs` on both runners (Postgres + Redis, no Docker); not pushed; no Mac baseline for `parity-diff` |
+| M8 sign-off + CI | **CI live** | `.github/workflows/ci.yml` on `windows-latest` (native Postgres + Redis via `infra.mjs`, build, full vitest, shutdown drill) in github.com/claurealex-cyber/tenant-ai-windows; run #1 failed (postgres.exe refuses an admin token → DB now created with the `pg` client), run #2 got to tests (fresh-DB billing-cycle → test fixed). Mac parity (`parity-diff`) out of scope: separate instances |
 
 ## What changed in this branch (all cross-platform, Mac behavior unchanged)
 
@@ -84,5 +84,5 @@ npm run stress:soak              # or let the "Tenant AI soak" task record; npm 
 #  guards that shared code still runs there.)
 ```
 
-Known quirk: on a freshly seeded DB, `billing-cycle.test.ts` reports 3 invoices
-instead of 2 on the first run (seeded demo subscription), then passes forever.
+Note: the old "first run on a freshly seeded DB fails billing-cycle" quirk is fixed (the test
+now asserts on its own subscriptions, not the global invoice count).

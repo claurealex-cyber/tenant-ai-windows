@@ -115,10 +115,8 @@ npm test                 # = vitest run; needs Postgres on :5433 (+ Redis on :63
 ```
 
 Tests assume the database is migrated (`npm run db:migrate:deploy`). Redis is
-optional — `scheduler.test.ts` skips itself when it can't connect. Known
-first-run quirk on a freshly seeded DB: `billing-cycle.test.ts` counts all
-invoices created for the month, so the seeded demo subscription makes the
-first run report 3 instead of 2; every run after that passes.
+optional — `scheduler.test.ts` skips itself when it can't connect. The suite
+passes on a freshly seeded DB (CI does exactly that on every run).
 
 ## Stress harness (`scripts/stress/`)
 
