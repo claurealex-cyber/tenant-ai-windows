@@ -30,6 +30,22 @@ interface RegisteredJob {
 
 const registry = new Map<string, RegisteredJob>();
 const workers: Worker[] = [];
+// Set by shutdownScheduler(). Registration runs after `listen` and a shutdown
+// can arrive in the middle of it; a Queue/Worker created on a connection that
+// is being closed emits an 'error' nobody listens to and the process dies.
+let shuttingDown = false;
+
+export function isSchedulerShuttingDown(): boolean {
+  return shuttingDown;
+}
+
+function onBullError(kind: "queue" | "worker", name: string) {
+  return (err: Error) => {
+    // During shutdown "Connection is closed" is expected noise; otherwise it's
+    // worth seeing (Redis dropped, auth, …). Either way it must not be fatal.
+    if (!shuttingDown) console.warn(`[scheduler] ${kind} "${name}" error: ${err.message}`);
+  };
+}
 
 /**
  * Register a job definition. Creates a BullMQ Queue and Worker.
@@ -48,6 +64,9 @@ export async function registerJob(definition: JobDefinition): Promise<void> {
   if (registry.has(name)) {
     throw new Error(`Job "${name}" is already registered`);
   }
+  if (shuttingDown) {
+    throw new Error(`Job "${name}" not registered: scheduler is shutting down`);
+  }
 
   const connection = getRedisConnection() as unknown as ConnectionOptions;
   const workerConnection = createRedisConnection() as unknown as ConnectionOptions;
@@ -65,6 +84,7 @@ export async function registerJob(definition: JobDefinition): Promise<void> {
       removeOnFail: { count: 500 }, // Keep last 500 failed for debugging
     },
   });
+  queue.on("error", onBullError("queue", name));
 
   // Create worker
   const worker = new Worker(
@@ -85,6 +105,7 @@ export async function registerJob(definition: JobDefinition): Promise<void> {
     }
   );
 
+  worker.on("error", onBullError("worker", name));
   worker.on("failed", (job, err) => {
     const entry = registry.get(name);
     if (entry) {
@@ -184,14 +205,22 @@ export function getRegisteredJobNames(): string[] {
  * Workers drain in-progress jobs before closing.
  */
 export async function shutdownScheduler(): Promise<void> {
-  // Close workers first (drains in-progress jobs)
-  await Promise.all(workers.map((w) => w.close()));
+  // Refuse registrations while we close (see `shuttingDown`); once everything
+  // is closed the scheduler is simply empty again, so tests (and a restart)
+  // can register fresh jobs.
+  shuttingDown = true;
+  try {
+    // Close workers first (drains in-progress jobs)
+    await Promise.all(workers.map((w) => w.close()));
 
-  // Close queues
-  for (const [, entry] of registry) {
-    await entry.queue.close();
+    // Close queues
+    for (const [, entry] of registry) {
+      await entry.queue.close();
+    }
+
+    registry.clear();
+    workers.length = 0;
+  } finally {
+    shuttingDown = false;
   }
-
-  registry.clear();
-  workers.length = 0;
 }

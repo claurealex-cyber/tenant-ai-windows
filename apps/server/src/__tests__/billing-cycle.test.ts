@@ -231,13 +231,15 @@ describe("runBillingCycle", () => {
   });
 
   it("is idempotent — running twice does not create duplicate invoices", async () => {
-    const created = await runBillingCycle(billingMonth);
-    expect(created).toBe(0); // All duplicates skipped
-
+    await runBillingCycle(billingMonth);
+    // The global count can be non-zero when another test file created an
+    // active subscription in the meantime; what matters is that OUR
+    // subscriptions did not get a second invoice for the month.
     const invoices = await prisma.invoice.findMany({
-      where: { subscriptionId: subId },
+      where: { subscriptionId: { in: [subId, overageSubId] }, billingMonth },
+      select: { subscriptionId: true },
     });
-    expect(invoices).toHaveLength(1);
+    expect(invoices.map((i) => i.subscriptionId).sort()).toEqual([subId, overageSubId].sort());
   });
 
   it("respects admin override pricing", async () => {
