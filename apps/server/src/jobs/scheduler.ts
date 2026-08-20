@@ -210,6 +210,36 @@ export async function shutdownScheduler(): Promise<void> {
   // can register fresh jobs.
   shuttingDown = true;
   try {
+    // Let every BullMQ connection finish initialising before closing it.
+    // RedisConnection.close() on a connection that is still *initialising*
+    // skips awaiting the init, removes all its listeners, and the pending init
+    // then rejects ("Connection is closed" once the shared client goes away)
+    // into an 'error' event nobody listens to — process exit 1. Happens when a
+    // shutdown lands right after boot (drill, takeover, supervisor restart).
+    // With Redis up this takes milliseconds; with Redis down init rejects on
+    // the first connection error; the timeout is only a backstop.
+    const settle = (p: Promise<unknown> | undefined, ms = 5000): Promise<void> =>
+      p
+        ? Promise.race([
+            p.then(() => undefined, () => undefined),
+            new Promise<void>((resolve) => {
+              const t = setTimeout(resolve, ms);
+              (t as { unref?: () => void }).unref?.();
+            }),
+          ])
+        : Promise.resolve();
+    type Internals = { blockingConnection?: { client: Promise<unknown> }; _jobScheduler?: { waitUntilReady(): Promise<unknown> } };
+    await Promise.all([
+      ...workers.flatMap((w) => [
+        settle(w.waitUntilReady()),
+        settle((w as unknown as Internals).blockingConnection?.client),
+      ]),
+      ...[...registry.values()].flatMap((e) => [
+        settle(e.queue.waitUntilReady()),
+        settle((e.queue as unknown as Internals)._jobScheduler?.waitUntilReady()),
+      ]),
+    ]);
+
     // Close workers first (drains in-progress jobs)
     await Promise.all(workers.map((w) => w.close()));
 
