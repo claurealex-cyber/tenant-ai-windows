@@ -28,6 +28,12 @@ interface RelayStatus {
   outstandingInvites: number;
   optOutCount: number;
   ledger: { pending: number; failed: number; sent: number } | null;
+  relayTransport?: {
+    name: "macos-messages" | "none";
+    available: boolean;
+    reason: string | null;
+    platform: string;
+  };
 }
 
 export default function SmsRelayPage() {
@@ -167,6 +173,17 @@ export default function SmsRelayPage() {
             }`}
           >
             {banner.text}
+          </div>
+        )}
+
+        {!loading && status?.relayTransport && !status.relayTransport.available && (
+          <div
+            className="mb-4 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900"
+            role="status"
+            data-testid="relay-unavailable-banner"
+          >
+            <span className="font-semibold">Relay not available on this machine.</span>{" "}
+            {status.relayTransport.reason}
           </div>
         )}
 

@@ -1,10 +1,7 @@
 import { prisma } from "../lib/prisma.js";
-import { resolveConfig } from "@tenant-ai/shared";
-import {
-  sendViaMessagesRelay,
-  notifyOnMac,
-  RelaySendError,
-} from "./messages-relay.js";
+import { resolveConfig, RELAY_UNAVAILABLE_ERROR } from "@tenant-ai/shared";
+import { RelaySendError } from "./messages-relay.js";
+import { getRelayTransport } from "./relay-transport.js";
 
 /**
  * Guarded, ledgered sending for the Messages.app relay.
@@ -184,12 +181,24 @@ export async function attemptSend(
   to: string,
   text: string,
 ): Promise<RelayOutcome> {
+  const transport = getRelayTransport();
+  if (!transport.available) {
+    // Not a failure of the send — there is nothing on this host that could
+    // send. Park the row (no attempt consumed) so it surfaces in the status
+    // panel and is retried by the sweep if the relay ever becomes available.
+    await prisma.outboundRelayMessage.update({
+      where: { id: rowId },
+      data: { status: "deferred", lastError: RELAY_UNAVAILABLE_ERROR },
+    });
+    return { id: rowId, status: "deferred", reason: RELAY_UNAVAILABLE_ERROR };
+  }
+
   await prisma.outboundRelayMessage.update({
     where: { id: rowId },
     data: { attempts: { increment: 1 } },
   });
   try {
-    await sendViaMessagesRelay(to, text);
+    await transport.send(to, text);
     await prisma.outboundRelayMessage.update({
       where: { id: rowId },
       data: { status: "sent", sentAt: new Date(), lastError: null },
@@ -203,7 +212,7 @@ export async function attemptSend(
       data: { status: "failed", lastError },
     });
     if (e.isTcc) {
-      notifyOnMac("Messages automation permission revoked — relay sends are failing. Re-approve in System Settings → Privacy → Automation.");
+      transport.notify("Messages automation permission revoked — relay sends are failing. Re-approve in System Settings → Privacy → Automation.");
     }
     return { id: rowId, status: "failed", reason: lastError };
   }
@@ -217,8 +226,23 @@ export async function attemptSend(
 const SWEEP_INTERVAL_MS = 10 * 60_000;
 const MAX_SENDS_PER_SWEEP = 2;
 
+let loggedUnavailable = false;
+
 export async function sweepOnce(log: (msg: string) => void = () => {}): Promise<void> {
-  const relayEnabled = (await resolveConfig("sms_relay", "enabled")) === "true";
+  let relayEnabled = (await resolveConfig("sms_relay", "enabled")) === "true";
+
+  // On a host without a relay transport (anything but macOS) there is nothing
+  // to retry and no heartbeat to send; skip the send steps but keep pruning.
+  if (relayEnabled) {
+    const transport = getRelayTransport();
+    if (!transport.available) {
+      if (!loggedUnavailable) {
+        log(`relay sweep: relay is enabled in settings but unavailable here — ${transport.reason}`);
+        loggedUnavailable = true;
+      }
+      relayEnabled = false;
+    }
+  }
 
   // 1. Retry failed (non-cooldown) and drain deferred rows — trickle, never burst.
   if (relayEnabled) {

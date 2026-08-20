@@ -35,3 +35,9 @@ npm-debug.log*
 # testing
 coverage/
 .launcher.pid
+.launcher.stop
+
+# windows setup + parity artifacts
+.win-setup-elevated.ps1
+.win-setup-elevated.log
+parity/*/raw/

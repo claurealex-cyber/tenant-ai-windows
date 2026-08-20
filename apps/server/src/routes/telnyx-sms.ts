@@ -6,6 +6,7 @@ import { smsRateLimitConfig } from "../lib/rate-limit.js";
 import { telnyxSignatureHook } from "../lib/telnyx-validate.js";
 import { sendTelnyxSms } from "../services/telnyx-client.js";
 import { relaySendWithGuards } from "../services/relay-guards.js";
+import { getRelayTransport } from "../services/relay-transport.js";
 
 interface TelnyxWebhookBody {
   data?: {
@@ -100,7 +101,13 @@ export async function processTelnyxInbound(
   return serializedByPhone(from, async () => {
     const result = await handleIncomingSms(from, to, text);
 
-    const relayEnabled = (await resolveConfig("sms_relay", "enabled")) === "true";
+    // The relay can be switched on in settings but have no transport on this
+    // host (it needs macOS Messages). In that case replies go out through the
+    // Telnyx API exactly as they do with the relay off — the documented
+    // rollback path — instead of piling up as deferred ledger rows.
+    const relayEnabled =
+      (await resolveConfig("sms_relay", "enabled")) === "true" &&
+      getRelayTransport().available;
 
     // Tenant free-text is NOT forwarded to the owner — it is persisted to
     // SmsConversation (dashboard Messages tab). Only completed application

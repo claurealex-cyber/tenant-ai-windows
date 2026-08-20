@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { selectRelayTransport } from "@tenant-ai/shared";
 
 // GET: relay status snapshot. Ledger fields report null until the relay
 // engine (OutboundRelayMessage) ships — the page renders those as "not deployed".
@@ -38,11 +39,21 @@ export async function GET() {
       ledger = null;
     }
 
+    // The dashboard and API server run on the same host, so the platform
+    // answer here matches what the server will do with a send.
+    const transport = selectRelayTransport();
+
     return NextResponse.json({
       intakeProperties,
       outstandingInvites,
       optOutCount,
       ledger,
+      relayTransport: {
+        name: transport.name,
+        available: transport.available,
+        reason: transport.reason,
+        platform: transport.platform,
+      },
     });
   } catch (error) {
     console.error("SMS relay status GET error:", error);

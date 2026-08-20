@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { addCall, removeCall, getAllCalls } from "../lib/call-registry.js";
 import type { ActiveCall } from "../lib/call-registry.js";
 
@@ -88,6 +88,34 @@ describe("Graceful shutdown", () => {
       "../lib/graceful-shutdown.js"
     );
     expect(isServerShuttingDown()).toBe(false);
+  });
+
+  it("requestShutdown is a no-op before handlers are registered", async () => {
+    const { requestShutdown, isServerShuttingDown } = await import(
+      "../lib/graceful-shutdown.js"
+    );
+    await requestShutdown("test");
+    expect(isServerShuttingDown()).toBe(false);
+  });
+
+  it("programmatic trigger (IPC path on Windows) closes the server and exits 0", async () => {
+    const mod = await import("../lib/graceful-shutdown.js");
+    const closeServer = vi.fn(async () => {});
+    const exit = vi.fn();
+    mod.registerShutdownHandlers(closeServer, { exit });
+
+    await mod.requestShutdown("ipc");
+
+    expect(mod.isServerShuttingDown()).toBe(true);
+    expect(closeServer).toHaveBeenCalledTimes(1);
+    expect(exit).toHaveBeenCalledWith(0);
+
+    // Idempotent: a second trigger (e.g. SIGINT racing the IPC message) is ignored
+    await mod.requestShutdown("SIGINT");
+    expect(closeServer).toHaveBeenCalledTimes(1);
+    expect(exit).toHaveBeenCalledTimes(1);
+
+    mod._resetShutdownStateForTests();
   });
 });
 

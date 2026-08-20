@@ -1,6 +1,9 @@
 process.env.PII_ENCRYPTION_KEY =
   process.env.PII_ENCRYPTION_KEY ||
   "b18f16b9017984f6a8fa9432ef01309a460666f71e81651f2f1a034e43b49521";
+// These tests exercise the Messages.app path (mocked below) and must behave
+// identically on macOS, Windows and Linux CI — pin the transport explicitly.
+process.env.RELAY_TRANSPORT = "macos-messages";
 
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from "vitest";
 import Fastify from "fastify";
@@ -17,6 +20,19 @@ vi.mock("../services/messages-relay.js", async (importOriginal) => {
     sendViaMessagesRelay: (...args: unknown[]) => mockSend(...args),
     notifyOnMac: vi.fn(),
   };
+});
+
+// Telnyx API + inbound handler are mocked so the delivery-seam tests can
+// assert which outbound path was chosen without network or OpenAI.
+const mockTelnyxSend = vi.fn();
+vi.mock("../services/telnyx-client.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../services/telnyx-client.js")>();
+  return { ...actual, sendTelnyxSms: (...args: unknown[]) => mockTelnyxSend(...args) };
+});
+const mockHandleIncoming = vi.fn();
+vi.mock("../handlers/sms-handler.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../handlers/sms-handler.js")>();
+  return { ...actual, handleIncomingSms: (...args: unknown[]) => mockHandleIncoming(...args) };
 });
 
 import { aplEscape, aplString, isTccError } from "../services/messages-relay.js";
@@ -86,6 +102,7 @@ afterAll(async () => {
 beforeEach(async () => {
   vi.clearAllMocks();
   mockSend.mockResolvedValue(undefined);
+  process.env.RELAY_TRANSPORT = "macos-messages";
   clearConfigCache();
   // generous defaults; individual tests override
   process.env.SMS_RELAY_ENABLED = "true";
@@ -218,6 +235,78 @@ describe("relaySendWithGuards", () => {
     expect(outcome.status).toBe("failed");
     const row = await prisma.outboundRelayMessage.findUnique({ where: { id: outcome.id! } });
     expect(row?.lastError).toBe("tcc");
+  });
+});
+
+// ── platform transport (Windows/Linux hosts have no Messages.app) ──
+
+describe("relay transport unavailable on this platform", () => {
+  beforeEach(() => {
+    process.env.RELAY_TRANSPORT = "none";
+  });
+
+  it("parks the ledger row as deferred with a platform reason and never calls osascript", async () => {
+    const { RELAY_UNAVAILABLE_ERROR } = await import("@tenant-ai/shared");
+    const outcome = await relaySendWithGuards(PHONE_A, "hello from windows", { kind: "link" });
+    expect(outcome.status).toBe("deferred");
+    expect(outcome.reason).toBe(RELAY_UNAVAILABLE_ERROR);
+    expect(mockSend).not.toHaveBeenCalled();
+    const row = await prisma.outboundRelayMessage.findUnique({ where: { id: outcome.id! } });
+    expect(row?.status).toBe("deferred");
+    expect(row?.lastError).toBe(RELAY_UNAVAILABLE_ERROR);
+    // no attempt consumed — nothing was tried
+    expect(row?.attempts).toBe(0);
+  });
+
+  it("the sweep does not try to drain deferred rows or send a heartbeat", async () => {
+    const { sweepOnce } = await import("../services/relay-guards.js");
+    process.env.SMS_RELAY_FORWARD_TO = PHONE_B;
+    clearConfigCache();
+    const logs: string[] = [];
+    await sweepOnce((m) => logs.push(m));
+    expect(mockSend).not.toHaveBeenCalled();
+    const heartbeat = await prisma.outboundRelayMessage.findFirst({
+      where: { to: PHONE_B, kind: "heartbeat" },
+    });
+    expect(heartbeat).toBeNull();
+    delete process.env.SMS_RELAY_FORWARD_TO;
+  });
+
+  it("processTelnyxInbound falls back to the Telnyx API when the relay has no transport", async () => {
+    mockTelnyxSend.mockResolvedValue(undefined);
+    mockHandleIncoming.mockResolvedValue({
+      shouldRespond: true,
+      replies: ["Thanks — here is your link"],
+      replyKind: "link",
+    });
+    const { processTelnyxInbound } = await import("../routes/telnyx-sms.js");
+    const sent = await processTelnyxInbound({
+      from: { phone_number: PHONE_A },
+      to: [{ phone_number: "+17089070695" }],
+      text: "hi",
+    } as any);
+    expect(sent).toBe(1);
+    expect(mockSend).not.toHaveBeenCalled();
+    expect(mockTelnyxSend).toHaveBeenCalledTimes(1);
+    expect(mockTelnyxSend).toHaveBeenCalledWith("+17089070695", PHONE_A, "Thanks — here is your link");
+  });
+
+  it("processTelnyxInbound uses the relay when a transport is available", async () => {
+    process.env.RELAY_TRANSPORT = "macos-messages";
+    mockTelnyxSend.mockResolvedValue(undefined);
+    mockHandleIncoming.mockResolvedValue({
+      shouldRespond: true,
+      replies: ["Thanks — here is your link"],
+      replyKind: "link",
+    });
+    const { processTelnyxInbound } = await import("../routes/telnyx-sms.js");
+    await processTelnyxInbound({
+      from: { phone_number: PHONE_B },
+      to: [{ phone_number: "+17089070695" }],
+      text: "hi",
+    } as any);
+    expect(mockTelnyxSend).not.toHaveBeenCalled();
+    expect(mockSend).toHaveBeenCalledTimes(1);
   });
 });
 

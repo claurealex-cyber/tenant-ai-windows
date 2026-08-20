@@ -9,10 +9,16 @@
     "build": "turbo run build",
     "dev": "turbo run dev",
     "lint": "turbo run lint",
+    "start": "node scripts/launch.mjs",
+    "test": "vitest run",
     "db:generate": "npm run prisma:generate --workspace=apps/server",
-    "db:migrate": "npm run prisma:migrate --workspace=apps/server",
-    "db:seed": "npm run prisma:seed --workspace=apps/server",
-    "db:studio": "npm run prisma:studio --workspace=apps/server"
+    "db:migrate": "node scripts/with-env.mjs npm run prisma:migrate --workspace=apps/server",
+    "db:migrate:deploy": "node scripts/with-env.mjs npx prisma migrate deploy --schema=apps/server/prisma/schema.prisma",
+    "db:seed": "node scripts/with-env.mjs npm run prisma:seed --workspace=apps/server",
+    "db:studio": "node scripts/with-env.mjs npm run prisma:studio --workspace=apps/server",
+    "stress:http": "node scripts/stress/http-load.mjs",
+    "stress:shutdown": "node scripts/with-env.mjs node scripts/stress/shutdown-drill.mjs",
+    "stress:parity": "node scripts/stress/parity-diff.mjs"
   },
   "devDependencies": {
     "turbo": "^2.3.0",

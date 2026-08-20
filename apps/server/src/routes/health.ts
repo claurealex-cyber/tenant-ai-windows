@@ -7,6 +7,30 @@ import {
   getRecentErrors,
 } from "../services/monitoring.js";
 
+/**
+ * Redis probe that cannot hang. The shared ioredis client runs with
+ * maxRetriesPerRequest: null (BullMQ requires it), which means a command
+ * issued while Redis is down is queued indefinitely instead of rejected —
+ * and an awaited ping() would hang this route forever. Bound it.
+ */
+async function redisPing(timeoutMs = 1500): Promise<boolean> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    const redis = getRedisConnection();
+    const pong = await Promise.race([
+      redis.ping(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("redis ping timeout")), timeoutMs);
+      }),
+    ]);
+    return pong === "PONG";
+  } catch {
+    return false;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 export async function healthRoute(server: FastifyInstance) {
   server.get("/health", async (_req, reply) => {
     let dbConnected = false;
@@ -17,14 +41,7 @@ export async function healthRoute(server: FastifyInstance) {
       // DB not connected
     }
 
-    let redisConnected = false;
-    try {
-      const redis = getRedisConnection();
-      const pong = await redis.ping();
-      redisConnected = pong === "PONG";
-    } catch {
-      // Redis not connected
-    }
+    const redisConnected = await redisPing();
 
     const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000);
     const recentErrorCount = getRecentErrors().filter(
@@ -70,13 +87,8 @@ export async function healthRoute(server: FastifyInstance) {
     } catch {
       // DB not reachable
     }
-    let redisConnected = false;
-    try {
-      const redis = getRedisConnection();
-      redisConnected = (await redis.ping()) === "PONG";
-    } catch {
-      // Redis failure is reported but non-fatal
-    }
+    // Redis failure is reported but non-fatal (and bounded — see redisPing)
+    const redisConnected = await redisPing();
     return reply
       .status(dbConnected ? 200 : 503)
       .send({ status: dbConnected ? "ok" : "down", dbConnected, redisConnected });

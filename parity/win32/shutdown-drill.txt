@@ -1,0 +1,28 @@
+######## mode=ipc
+✓ cycle 1/5: boot 2917ms, ipc shutdown 3037ms, exit {"code":0,"signal":null}, port freed after 0ms
+✓ cycle 2/5: boot 2863ms, ipc shutdown 3041ms, exit {"code":0,"signal":null}, port freed after 0ms
+✓ cycle 3/5: boot 3106ms, ipc shutdown 3042ms, exit {"code":0,"signal":null}, port freed after 0ms
+✓ cycle 4/5: boot 2629ms, ipc shutdown 3048ms, exit {"code":0,"signal":null}, port freed after 0ms
+✓ cycle 5/5: boot 2607ms, ipc shutdown 3040ms, exit {"code":0,"signal":null}, port freed after 0ms
+
+✓ 5/5 clean cycles; avg boot 2824ms, avg shutdown 3042ms, redisConnected=false
+
+exit=0
+######## mode=stdin
+✓ cycle 1/3: boot 2911ms, stdin shutdown 3027ms, exit {"code":0,"signal":null}, port freed after 0ms
+✓ cycle 2/3: boot 2625ms, stdin shutdown 3032ms, exit {"code":0,"signal":null}, port freed after 0ms
+✓ cycle 3/3: boot 2882ms, stdin shutdown 3025ms, exit {"code":0,"signal":null}, port freed after 0ms
+
+✓ 3/3 clean cycles; avg boot 2806ms, avg shutdown 3028ms, redisConnected=false
+
+exit=0
+######## mode=hard
+✓ cycle 1/3: boot 2911ms, hard shutdown 35ms, exit {"code":null,"signal":"SIGKILL"}, port freed after 0ms
+✓ cycle 2/3: boot 2597ms, hard shutdown 16ms, exit {"code":null,"signal":"SIGKILL"}, port freed after 0ms
+✓ cycle 3/3: boot 2852ms, hard shutdown 30ms, exit {"code":null,"signal":"SIGKILL"}, port freed after 0ms
+
+✓ 3/3 clean cycles; avg boot 2787ms, avg shutdown 27ms, redisConnected=false
+
+exit=0
+
+[exited with code 0]

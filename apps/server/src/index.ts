@@ -1,3 +1,6 @@
+// Must be the first import: populates process.env from .env before any module
+// reads it (Prisma, config resolver, the PII key check below).
+import "./lib/load-env.js";
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import formbody from "@fastify/formbody";
