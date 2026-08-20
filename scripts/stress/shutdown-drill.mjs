@@ -48,7 +48,22 @@ async function waitHealthy(timeoutMs = 60_000) {
   throw new Error(`server on :${port} never answered /health`);
 }
 
+/**
+ * Close every handle we hold on a child (IPC channel, stdin pipe, stderr pipe)
+ * and wait for "close". Exiting while one of them is still closing trips a
+ * libuv assertion on Windows (src\win\async.c: UV_HANDLE_CLOSING) and turns a
+ * passing drill into a non-zero exit — intermittently, which is worse.
+ */
+async function teardown(child) {
+  const closed = new Promise((resolve) => child.once("close", resolve));
+  try { child.disconnect(); } catch {}
+  try { child.stdin?.destroy(); } catch {}
+  try { child.stderr?.destroy(); } catch {}
+  await Promise.race([closed, sleep(3000)]);
+}
+
 const results = [];
+let aborted = false;
 for (let i = 1; i <= cycles; i++) {
   if (!(await portFree(port))) throw new Error(`cycle ${i}: port ${port} busy before start`);
   const t0 = Date.now();
@@ -69,7 +84,9 @@ for (let i = 1; i <= cycles; i++) {
     // Never leave an orphan behind when the drill itself fails.
     child.kill("SIGKILL");
     console.log(`✗ cycle ${i}: ${err.message}\n    stderr: ${stderr.slice(-1200)}`);
-    process.exit(1);
+    await teardown(child);
+    aborted = true;
+    break;
   }
   const tUp = Date.now() - t0;
 
@@ -83,6 +100,7 @@ for (let i = 1; i <= cycles; i++) {
   const outcome = await Promise.race([exited, sleep(grace + 30_000).then(() => ({ code: null, signal: "TIMEOUT" }))]);
   const tDown = Date.now() - t1;
   if (outcome.signal === "TIMEOUT") { child.kill("SIGKILL"); }
+  await teardown(child);
 
   // Port must be free promptly after exit
   let freedAfter = null;
@@ -95,7 +113,8 @@ for (let i = 1; i <= cycles; i++) {
   if (!pass && /TIMEOUT/.test(String(outcome.signal))) console.log("    (hung in shutdown — check Redis/BullMQ close with Redis down)");
 }
 
-const failed = results.filter((r) => !r.pass).length;
-const avg = (k) => Math.round(results.reduce((s, r) => s + (r[k] || 0), 0) / results.length);
+const failed = results.filter((r) => !r.pass).length + (aborted ? 1 : 0);
+const avg = (k) => Math.round(results.reduce((s, r) => s + (r[k] || 0), 0) / Math.max(1, results.length));
 console.log(`\n${failed === 0 ? "✓" : "✗"} ${cycles - failed}/${cycles} clean cycles; avg boot ${avg("bootMs")}ms, avg shutdown ${avg("shutdownMs")}ms, redisConnected=${results[0]?.redisConnected}`);
-process.exit(failed ? 1 : 0);
+// Let the event loop drain instead of process.exit() — see teardown().
+process.exitCode = failed ? 1 : 0;
