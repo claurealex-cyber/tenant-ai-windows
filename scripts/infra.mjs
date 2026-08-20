@@ -372,15 +372,37 @@ async function pgInit(cfg) {
   } finally {
     try { unlinkSync(pw); } catch {}
   }
-  if (cfg.database !== "postgres") {
-    // No psql in the zonky bundle: create the database in single-user mode
-    // (before the server is started; statements autocommit there).
-    const r = spawnSync(path.join(bin, exe("postgres")), ["--single", "-D", data, "postgres"], {
-      input: `CREATE DATABASE "${cfg.database.replace(/"/g, '""')}";\n`, encoding: "utf8", windowsHide: true,
-    });
-    if (r.status !== 0) throw new Error(`CREATE DATABASE failed (${r.status}):\n${r.stderr || r.stdout}`);
-  }
   return true;
+}
+
+/**
+ * Make sure cfg.database exists (the cluster only has `postgres` after
+ * initdb). No psql in the zonky bundle, so use the `pg` client that ships as a
+ * dependency of embedded-postgres. Not `postgres --single`: postgres.exe
+ * refuses to run under an administrator token (GitHub's Windows runners,
+ * elevated shells) — only pg_ctl/initdb drop privileges themselves.
+ */
+async function pgEnsureDatabase(cfg) {
+  if (cfg.database === "postgres") return;
+  let pg;
+  try { pg = require("pg"); } catch { pg = null; }
+  if (pg) {
+    const client = new pg.Client({ host: "127.0.0.1", port: cfg.port, user: cfg.user, password: cfg.password, database: "postgres", connectionTimeoutMillis: 10_000 });
+    await client.connect();
+    try {
+      const { rowCount } = await client.query("SELECT 1 FROM pg_database WHERE datname = $1", [cfg.database]);
+      if (!rowCount) await client.query(`CREATE DATABASE "${cfg.database.replace(/"/g, '""')}"`);
+    } finally { await client.end(); }
+    return;
+  }
+  // Fallback without the pg module: single-user mode (server must be stopped; not usable as admin).
+  const bin = postgresBinDir();
+  await pgStop();
+  const r = spawnSync(path.join(bin, exe("postgres")), ["--single", "-D", dataDir("postgres"), "postgres"], {
+    input: `CREATE DATABASE "${cfg.database.replace(/"/g, '""')}";\n`, encoding: "utf8", windowsHide: true,
+  });
+  if (r.status !== 0) throw new Error(`CREATE DATABASE failed (${r.status}):\n${r.stderr || r.stdout}`);
+  throw new Error("database created in single-user mode — run `up` again to start the server");
 }
 
 async function pgStart(cfg) {
@@ -397,6 +419,7 @@ async function pgStart(cfg) {
   ], { log: logFile("pg_ctl") });
   if (r.status !== 0) throw new Error(`pg_ctl start failed (${r.status}):\n${r.stderr || r.stdout}\n--- ${logFile("postgres")}:\n${tail(logFile("postgres"), 15)}`);
   writePid("postgres", pgPid() || 0);
+  await pgEnsureDatabase(cfg);
 }
 
 function pgPid() {
