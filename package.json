@@ -18,9 +18,15 @@
     "db:studio": "node scripts/with-env.mjs npm run prisma:studio --workspace=apps/server",
     "stress:http": "node scripts/stress/http-load.mjs",
     "stress:shutdown": "node scripts/with-env.mjs node scripts/stress/shutdown-drill.mjs",
-    "stress:parity": "node scripts/stress/parity-diff.mjs"
+    "stress:parity": "node scripts/stress/parity-diff.mjs",
+    "infra": "node scripts/infra.mjs",
+    "infra:install": "node scripts/infra.mjs install",
+    "infra:up": "node scripts/infra.mjs up",
+    "infra:down": "node scripts/infra.mjs down",
+    "infra:status": "node scripts/infra.mjs status"
   },
   "devDependencies": {
+    "embedded-postgres": "^16.14.0-beta.17",
     "turbo": "^2.3.0",
     "typescript": "^5.7.0"
   },

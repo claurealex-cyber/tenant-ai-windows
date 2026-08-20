@@ -1,0 +1,10 @@
+>> infra mode: native
+>> postgres: stop for 30s
+
+scenario         sawDown recovered
+--------         ------- ---------
+postgres-restart    True      True
+
+
+
+[OK] all scenarios recovered without a restart

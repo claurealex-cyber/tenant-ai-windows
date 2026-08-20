@@ -1,8 +1,9 @@
 # Build + test on both operating systems the app runs on, so the macOS and
 # Windows versions can never drift apart silently (M8 of the Windows port).
 #
-# Both GitHub-hosted images ship PostgreSQL; we start it and create the same
-# role/db/port the repo's docker-compose uses, so DATABASE_URL is identical.
+# Infra comes from scripts/infra.mjs (native Postgres 16 + Redis on the same
+# ports/credentials as docker-compose), so DATABASE_URL/REDIS_URL are identical
+# to a developer machine and no Docker daemon is needed on the runners.
 name: ci
 
 on:
@@ -20,6 +21,7 @@ jobs:
         os: [windows-latest, macos-latest]
     env:
       DATABASE_URL: postgresql://tenant_ai:tenant_ai@localhost:5433/tenant_ai
+      REDIS_URL: redis://localhost:6380
       PII_ENCRYPTION_KEY: b18f16b9017984f6a8fa9432ef01309a460666f71e81651f2f1a034e43b49521
       NEXTAUTH_SECRET: ci-nextauth-secret
       TENANT_AUTH_SECRET: ci-tenant-secret
@@ -32,28 +34,19 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Start PostgreSQL (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          & "$env:PGBIN\pg_ctl" -D "$env:PGDATA" -o "-p 5433" -w start
-          & "$env:PGBIN\psql" -p 5433 -U postgres -c "CREATE ROLE tenant_ai LOGIN PASSWORD 'tenant_ai' SUPERUSER;"
-          & "$env:PGBIN\psql" -p 5433 -U postgres -c "CREATE DATABASE tenant_ai OWNER tenant_ai;"
-        env:
-          PGPASSWORD: root
-
-      - name: Start PostgreSQL (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          brew services start postgresql@14 || brew services start postgresql
-          for i in $(seq 1 30); do pg_isready && break; sleep 1; done
-          # default port is 5432 on the runner; run a second cluster on 5433 to match the repo
-          initdb -D "$RUNNER_TEMP/pg5433" -U postgres
-          pg_ctl -D "$RUNNER_TEMP/pg5433" -o "-p 5433" -w start
-          psql -p 5433 -U postgres -c "CREATE ROLE tenant_ai LOGIN PASSWORD 'tenant_ai' SUPERUSER;"
-          psql -p 5433 -U postgres -c "CREATE DATABASE tenant_ai OWNER tenant_ai;"
-
       - run: npm ci
+
+      # Same native Postgres 16 + Redis the Windows launcher uses (scripts/infra.mjs):
+      # Postgres binaries come with `npm ci` (embedded-postgres), Redis is
+      # downloaded on Windows and comes from brew on macOS. No Docker on either runner.
+      - name: Install Redis (macOS)
+        if: runner.os == 'macOS'
+        run: brew install redis
+      - name: Start native infra (postgres + redis on the compose ports)
+        run: |
+          node scripts/infra.mjs install redis
+          node scripts/infra.mjs up postgres redis
+          node scripts/infra.mjs status
       - run: npm run db:generate
       - run: npm run build
       - name: Migrate + seed

@@ -1,0 +1,29 @@
+{
+  "name": "health-deep",
+  "url": "http://127.0.0.1:3001/health/deep",
+  "connections": 50,
+  "durationS": 30,
+  "spreadIp": true,
+  "platform": "win32",
+  "arch": "x64",
+  "node": "v24.17.0",
+  "cpus": 6,
+  "requests": 152670,
+  "ok": 152670,
+  "errors": 0,
+  "statusCounts": {
+    "200": 152670
+  },
+  "reqPerSec": 5088,
+  "latencyMs": {
+    "p50": 8.81,
+    "p90": 13.06,
+    "p99": 22.69,
+    "max": 183.86
+  },
+  "serverRssMB": {
+    "before": 134.3,
+    "after": 351.5
+  },
+  "at": "2026-08-20T15:56:28.367Z"
+}

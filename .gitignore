@@ -41,3 +41,6 @@ coverage/
 .win-setup-elevated.ps1
 .win-setup-elevated.log
 parity/*/raw/
+
+# native dev infra (scripts/infra.mjs): binaries, data, pids, logs
+.local/

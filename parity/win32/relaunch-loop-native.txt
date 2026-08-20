@@ -1,0 +1,9 @@
+>> launcher args: --no-open --no-ngrok --no-build
+[OK] cycle 1/5: launcher pid 6636, healthy=True in 7s, prevGone=True, listeners 3000=1 3002=1 api=1, ngrok=0
+[OK] cycle 2/5: launcher pid 16832, healthy=True in 7s, prevGone=True, listeners 3000=1 3002=1 api=1, ngrok=0
+[OK] cycle 3/5: launcher pid 11900, healthy=True in 7s, prevGone=True, listeners 3000=1 3002=1 api=1, ngrok=0
+[OK] cycle 4/5: launcher pid 20300, healthy=True in 8s, prevGone=True, listeners 3000=1 3002=1 api=1, ngrok=0
+[OK] cycle 5/5: launcher pid 15696, healthy=True in 8s, prevGone=True, listeners 3000=1 3002=1 api=1, ngrok=0
+>> stopping final instance
+node.exe before=0 after=0; leftover listeners=0
+[OK] 5/5 takeovers clean

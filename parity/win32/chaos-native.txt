@@ -1,0 +1,14 @@
+>> infra mode: native
+>> postgres: stop for 30s
+>> redis: stop for 60s (server must stay up, redisConnected=false)
+>> infra: stop every native service, wait 10s, start them again
+
+scenario         sawDown recovered
+--------         ------- ---------
+postgres-restart   False      True
+redis-restart       True      True
+infra-restart      False      True
+
+
+
+[OK] all scenarios recovered without a restart

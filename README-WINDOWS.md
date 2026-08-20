@@ -1,9 +1,16 @@
 # Tenant AI on Windows
 
-The same monorepo, the same build, the same Docker images — run natively on
-Windows 11. One launcher (`scripts/launch.mjs`) drives macOS and Windows so the
-two can't drift; `start.sh` (Mac), `start.cmd` / `start.ps1` (Windows) are thin
-wrappers around it.
+The same monorepo, the same build — run natively on Windows 11, **without
+Docker or a WSL2 VM**: Postgres 16, Redis and (optionally) MinIO run as plain
+local processes managed by `scripts/infra.mjs`, on the same ports and
+credentials as `docker-compose.yml`, so `.env`, the tests and the launcher
+don't care which is behind them. One launcher (`scripts/launch.mjs`) drives
+macOS and Windows so the two can't drift; `start.sh` (Mac), `start.cmd` /
+`start.ps1` (Windows) are thin wrappers around it.
+
+Why native: Docker Desktop's WSL2 VM (`vmmemWSL`) held 2.3 GB on the 12 GB
+laptop and starved Chrome/Edge; the three native processes take ~100 MB
+(Postgres ~90 MB + Redis ~13 MB; MinIO adds ~200 MB and is off by default).
 
 ## One-time setup
 
@@ -13,8 +20,9 @@ Run from an **elevated** PowerShell once (each line is idempotent):
 winget install -e --id OpenJS.NodeJS.LTS          # Node 20+ x64 (22/24 fine)
 winget install -e --id Git.Git
 winget install -e --id Ngrok.Ngrok                 # optional: Twilio/Telnyx tunnel
-winget install -e --id Docker.DockerDesktop        # WSL2 backend; reboot once afterwards
 corepack enable                                     # honors packageManager: npm@11.x
+# (No Docker Desktop / WSL2 needed — see "Infra" below. If you want the Docker
+#  path anyway: winget install -e --id Docker.DockerDesktop, reboot, --infra=docker.)
 
 # Reserve the app's ports before Hyper-V/WSL grabs them into a dynamic range
 # (symptom: EACCES/EADDRINUSE on :3001 with nothing listening)
@@ -35,12 +43,41 @@ Then, as a normal user:
 git clone https://github.com/claurealex-cyber/tenant-ai $HOME\src\tenant-ai
 cd $HOME\src\tenant-ai
 Copy-Item .env.example .env          # fill in secrets; PII_ENCRYPTION_KEY = 64 hex chars
-npm ci
+npm ci                               # also brings the Postgres 16 binaries (embedded-postgres)
 npm run db:generate
+npm run infra:install                # downloads Redis 8 (and MinIO) for Windows into .local\infra\
 ```
 
-Docker Desktop: enable *Start Docker Desktop when you sign in* and set a disk
-limit under Resources (the Mac once ran out of disk under Colima).
+## Infra without Docker (`scripts/infra.mjs`)
+
+```powershell
+npm run infra:up                     # postgres + redis (add "minio" to include it): like `docker compose up -d`
+npm run infra:status                 # UP :5433 / :6380 / :9002 + pids
+npm run infra:down                   # like `docker compose stop`
+npm run infra -- logs postgres       # .local\infra\log\<svc>.log
+npm run infra -- reset redis --yes   # wipe that service's data
+```
+
+* Postgres 16.14 (zonky build from the `embedded-postgres` npm package, no
+  installer, no service, no admin rights), cluster in `.local\infra\data\postgres`,
+  superuser `tenant_ai`/`tenant_ai`, db `tenant_ai`, port 5433 — exactly the
+  compose values, read from `DATABASE_URL`.
+* Redis 8.10 ([redis-windows](https://github.com/redis-windows/redis-windows)
+  msys2 build, sha256-pinned in `infra.mjs`), RDB snapshots in `.local\infra\data\redis`, port 6380.
+* MinIO (official exe, pinned release) on 9002/9003 — optional; only Admin →
+  Integrations → S3 test uses it. Start it with `npm run infra -- up minio` or
+  `INFRA_SERVICES=postgres,redis,minio` for the launcher.
+* Processes are started detached (they survive the shell/launcher that started
+  them, like `up -d`), pids in `.local\infra\run\`, logs in `.local\infra\log\`.
+  On Windows they are created through `scripts\lib\start-detached.ps1`
+  (`CreateProcess` with `bInheritHandles=false`, no console): Node's own
+  `spawn` lets a detached child inherit every handle of the parent — including
+  the stdout pipe of whatever shell or CI runner invoked `infra.mjs`, which
+  then blocks on EOF for as long as the service runs. Everything under
+  `.local\` is gitignored. On macOS/Linux the same script works with `brew install redis
+  minio` (Postgres still from npm), but the Mac default stays Docker.
+* The launcher picks the mode: `--infra=native|docker|none` or `INFRA_MODE`;
+  default **native on Windows, docker elsewhere**; `--no-docker` = `--infra=none`.
 
 ## Run
 
@@ -51,12 +88,12 @@ limit under Resources (the Mac once ran out of disk under Colima).
   calls first (`SHUTDOWN_GRACE_MS`, default 120 s).
 
 The launcher does exactly what `start.sh` does: stops a previous instance and
-orphaned servers, starts Docker Desktop if needed, `docker compose up` for
-postgres/redis/minio, frees :3000, picks the API port (3001 → 3005–3008),
-waits for Postgres, `prisma migrate deploy`, `npm run build` (Turbo-cached),
-starts the ngrok tunnel when `PUBLIC_URL` is set and ngrok is installed, opens
-the dashboard, and serves. Flags for automation: `--no-build --no-ngrok
---no-open --no-docker`.
+orphaned servers, brings the infra up (native `infra.mjs up` on Windows;
+Docker Desktop + `docker compose up` with `--infra=docker`), frees :3000, picks
+the API port (3001 → 3005–3008), waits for Postgres, `prisma migrate deploy`,
+`npm run build` (Turbo-cached), starts the ngrok tunnel when `PUBLIC_URL` is
+set and ngrok is installed, opens the dashboard, and serves. Flags for
+automation: `--no-build --no-ngrok --no-open --infra=native|docker|none`.
 
 ## What's different on Windows (and why)
 
@@ -66,14 +103,15 @@ the dashboard, and serves. Flags for automation: `--no-build --no-ngrok
 | Graceful shutdown | `SIGTERM` | No SIGTERM on Windows; the launcher sends an IPC `{type:"shutdown"}` and closes the server's stdin (`SHUTDOWN_ON_STDIN_END=1`). Ctrl-C still works as before. |
 | SMS relay (Messages.app) | osascript → iPhone text forwarding | **Not available.** `selectRelayTransport()` reports `none`; the relay row is parked as `deferred` / `relay-unavailable-on-platform` and tenant replies go out via the Telnyx API (the documented rollback path). Admin → SMS Relay shows a banner. Force with `RELAY_TRANSPORT=macos-messages|none`. |
 | ngrok from Admin → System Health | `spawn("ngrok")` | Same, plus `windowsHide` so no console window pops up. Set `NGROK_PATH` if ngrok isn't on PATH. |
-| Docker | Colima | Docker Desktop (WSL2). |
+| Infra | Colima + `docker compose` | **Native processes** via `scripts/infra.mjs` (Postgres 16 from npm, Redis 8 for Windows, MinIO exe) — no VM. `--infra=docker` gives Docker Desktop (WSL2) if you really want it. |
 | Port / process inspection | `lsof`, `pkill` | `netstat -ano` + `Get-CimInstance Win32_Process`, `taskkill`. |
 | Line endings | — | `.gitattributes` forces LF (scripts, .env, seeds) and CRLF only for `*.cmd/*.ps1`. |
 
 ## Tests
 
 ```powershell
-npm test                 # = vitest run; needs Postgres on :5433 (Docker or any local PG)
+npm run infra:up         # once per login (native Postgres + Redis; Docker works too)
+npm test                 # = vitest run; needs Postgres on :5433 (+ Redis on :6380 for the scheduler tests)
 ```
 
 Tests assume the database is migrated (`npm run db:migrate:deploy`). Redis is
@@ -86,11 +124,11 @@ first run report 3 instead of 2; every run after that passes.
 
 | Script | Gate | What it proves |
 |---|---|---|
-| `http-load.mjs` | M0/M2/M6 | req/s, p50/p90/p99, server RSS → `parity/<os>/http-load-*.json` |
+| `http-load.mjs` | M0/M2/M6 | req/s, p50/p90/p99, server RSS → `parity/<os>/http-load-*.json`. Use `--spread-ip` to get past the API's 60 req/min per-IP limiter (otherwise ~99% of a 50-connection run is `429` and you are measuring the limiter) |
 | `shutdown-drill.mjs` | M3 | N× boot → shutdown via `--mode ipc|stdin|sigint|hard`; exit code, port released, no orphans |
 | `relaunch-loop.ps1` | M4 | N launcher takeovers; one listener per port, no leftover node/ngrok |
 | `port-squatter.mjs` | M4 | holds :3000/:3001 so the launcher must refuse / fall back to 3005–3008 |
-| `chaos.ps1` | M2/M7 | stop/start Postgres, Redis, Docker Desktop under load; server must recover without restart |
+| `chaos.ps1` | M2/M7 | stop/start Postgres, Redis, then the whole infra (native `infra.mjs down/up`, or Docker Desktop with `-Infra docker`) under load; server must recover without restart |
 | `parity-diff.mjs` | M6/M8 | compares `parity/mac` vs `parity/win32` artifacts within a tolerance |
 
 ## Always-on (M7)

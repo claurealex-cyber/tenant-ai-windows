@@ -4,8 +4,10 @@
  * start.sh (macOS/zsh). Same ten steps, same semantics, one source of truth:
  *
  *   0. relaunch = restart (pidfile takeover), clean up orphaned servers
- *   1. start the Docker daemon (Colima on macOS, Docker Desktop on Windows)
- *   2. docker compose up postgres/redis/minio
+ *   1. infra: native (postgres/redis[/minio] as local processes — default on
+ *      Windows, see scripts/infra.mjs) or Docker (start Colima / Docker
+ *      Desktop — default on macOS/Linux)
+ *   2. bring the infra up (infra.mjs up / docker compose up -d)
  *   3. free port 3000 (stop other projects' containers holding it)
  *   4. pick the API port (3001, else 3005–3008) → SERVER_PORT for everyone
  *   5. wait for Postgres
@@ -16,7 +18,12 @@
  *  10. serve all three apps; Ctrl-C stops everything
  *
  * Wrappers: start.sh (macOS/Linux), start.cmd / start.ps1 (Windows).
- * Flags: --no-build --no-ngrok --no-open --no-docker (for stress/CI runs).
+ * Flags: --no-build --no-ngrok --no-open (for stress/CI runs),
+ *        --infra=native|docker|none (or INFRA_MODE env; default: native on
+ *        Windows, docker elsewhere). --no-docker is kept as an alias of
+ *        --infra=none (bring your own Postgres on DATABASE_URL).
+ *        INFRA_SERVICES=postgres,redis,minio picks what native mode starts
+ *        (default postgres,redis — MinIO is optional in dev).
  *
  * No dependencies — runs on the Node that ships with the project.
  */
@@ -25,6 +32,7 @@ import { existsSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { loadEnvFile } from "./lib/dotenv.mjs";
 
 const PROJECT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 process.chdir(PROJECT_DIR);
@@ -41,37 +49,21 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ── .env (same as `set -a; . ./.env`: never overrides what the shell set) ──
 
-function parseEnvFile(contents) {
-  const out = {};
-  for (const rawLine of contents.split(/\r?\n/)) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith("#")) continue;
-    const eq = line.indexOf("=");
-    if (eq <= 0) continue;
-    let key = line.slice(0, eq).trim();
-    if (key.startsWith("export ")) key = key.slice(7).trim();
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
-    let value = line.slice(eq + 1).trim();
-    if ((value.startsWith('"') && value.endsWith('"') && value.length >= 2) ||
-        (value.startsWith("'") && value.endsWith("'") && value.length >= 2)) {
-      const q = value[0];
-      value = value.slice(1, -1);
-      if (q === '"') value = value.replace(/\\n/g, "\n");
-    } else {
-      const hash = value.search(/\s#/);
-      if (hash >= 0) value = value.slice(0, hash).trimEnd();
-    }
-    out[key] = value;
-  }
-  return out;
-}
+loadEnvFile(path.join(PROJECT_DIR, ".env"));
 
-const envFile = path.join(PROJECT_DIR, ".env");
-if (existsSync(envFile)) {
-  for (const [k, v] of Object.entries(parseEnvFile(readFileSync(envFile, "utf8")))) {
-    if (process.env[k] === undefined) process.env[k] = v;
-  }
-}
+// ── infra mode ─────────────────────────────────────────────────────────────
+// native: scripts/infra.mjs runs postgres/redis[/minio] as local processes
+// docker: Colima / Docker Desktop + docker compose (the original behaviour)
+// none:   bring your own (DATABASE_URL / REDIS_URL already point somewhere)
+const INFRA = (() => {
+  if (flag("no-docker") || flag("no-infra")) return "none";
+  const arg = process.argv.find((a) => a.startsWith("--infra="));
+  const mode = (arg ? arg.slice("--infra=".length) : process.env.INFRA_MODE || "auto").toLowerCase();
+  if (["native", "docker", "none"].includes(mode)) return mode;
+  if (mode !== "auto") { console.log(`✗ unknown --infra mode "${mode}" (native|docker|none)`); process.exit(2); }
+  return IS_WIN ? "native" : "docker";
+})();
+const INFRA_SERVICES = (process.env.INFRA_SERVICES || "postgres,redis").split(",").map((s) => s.trim()).filter(Boolean);
 
 // ── process helpers ────────────────────────────────────────────────────────
 
@@ -206,9 +198,21 @@ for (const port of [3005, 3006, 3007, 3008, parseInt(process.env.SERVER_PORT || 
   }
 }
 
-// ── 1. Docker daemon ───────────────────────────────────────────────────────
+// ── 1+2. infrastructure ────────────────────────────────────────────────────
 
-if (!flag("no-docker")) {
+let infra = null; // scripts/infra.mjs module (native mode)
+if (INFRA === "native") {
+  infra = await import("./infra.mjs");
+  log(`▶ Starting local infra (${INFRA_SERVICES.join(", ")}) — native processes, no Docker…`);
+  try {
+    await infra.up(INFRA_SERVICES);
+  } catch (e) {
+    log(`✗ ${e.message || e}`);
+    log("  Fix: `npm run infra:install` (Windows: downloads Redis/MinIO; Postgres comes with `npm ci`),");
+    log("  or run with --infra=docker / --infra=none (bring your own DATABASE_URL).");
+    process.exit(1);
+  }
+} else if (INFRA === "docker") {
   if (dockerOk()) {
     log("✓ Docker daemon already running");
   } else if (IS_MAC) {
@@ -244,7 +248,7 @@ if (!flag("no-docker")) {
 // ── 3. free port 3000 for the dashboard ────────────────────────────────────
 
 if (portInUse(3000)) {
-  const ps = capture("docker", ["ps", "--format", "{{.Names}}\t{{.Ports}}"]) || "";
+  const ps = INFRA === "docker" ? capture("docker", ["ps", "--format", "{{.Names}}\t{{.Ports}}"]) || "" : "";
   const holders = ps.split(/\r?\n/).filter((l) => /:3000->/.test(l)).map((l) => l.split("\t")[0]);
   if (holders.length) {
     log(`▶ Port 3000 is held by container(s): ${holders.join(", ")} — stopping them`);
@@ -275,7 +279,7 @@ const SERVER_PORT = parseInt(process.env.SERVER_PORT || "3001", 10);
 
 // ── 5. wait for Postgres ───────────────────────────────────────────────────
 
-if (!flag("no-docker")) {
+if (INFRA === "docker") {
   log("▶ Waiting for Postgres (localhost:5433)…");
   let ready = false;
   for (let i = 0; i < 30 && !ready; i++) {
@@ -283,6 +287,11 @@ if (!flag("no-docker")) {
     if (!ready) await sleep(1000);
   }
   log(ready ? "✓ Postgres ready" : "! Postgres not ready after 30s — continuing (migrations may fail)");
+} else if (INFRA === "native") {
+  // infra.up() already waited for pg_ctl -w; this is the belt to its braces.
+  const { postgres } = infra.config();
+  const ready = await infra.waitForPort(postgres.port, { timeoutMs: 30_000 });
+  log(ready ? `✓ Postgres ready (localhost:${postgres.port})` : `! Postgres not answering on ${postgres.port} after 30s — continuing (migrations may fail)`);
 }
 
 // ── 6. migrations ──────────────────────────────────────────────────────────

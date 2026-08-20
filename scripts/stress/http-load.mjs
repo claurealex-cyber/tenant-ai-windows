@@ -3,11 +3,17 @@
  * HTTP load generator — no dependencies (uses Node's keep-alive fetch).
  *
  *   node scripts/stress/http-load.mjs --url http://127.0.0.1:3001/health \
- *        --connections 50 --duration 30 --name health [--out parity/win]
+ *        --connections 50 --duration 30 --name health [--out parity/win] [--spread-ip]
  *
  * Prints p50/p90/p99 latency, req/s, error count and (for /health targets)
  * the server's RSS before/after. Writes JSON so parity-diff.mjs can compare
  * the Mac and Windows numbers. Used at M0, M2, M6.
+ *
+ * --spread-ip: the API rate-limits 60 req/min per client IP (X-Forwarded-For
+ * wins over the socket address), so a single-host load test is 99% 429s after
+ * the first second. With this flag every request carries a distinct
+ * X-Forwarded-For (10.x.y.z), so the numbers measure the server, not the
+ * limiter. Without it you measure the limiter — also useful, just different.
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -30,6 +36,14 @@ async function rss() {
   } catch { return null; }
 }
 
+const spreadIp = args["spread-ip"] === "true";
+let seq = 0;
+const nextHeaders = () => {
+  if (!spreadIp) return undefined;
+  const n = seq++;
+  return { "x-forwarded-for": `10.${(n >> 16) & 255}.${(n >> 8) & 255}.${n & 255}` };
+};
+
 const latencies = [];
 let ok = 0, errors = 0, statusCounts = {};
 const rssBefore = await rss();
@@ -39,7 +53,7 @@ async function worker() {
   while (Date.now() < end) {
     const t0 = process.hrtime.bigint();
     try {
-      const r = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+      const r = await fetch(url, { signal: AbortSignal.timeout(10_000), headers: nextHeaders() });
       await r.arrayBuffer();
       statusCounts[r.status] = (statusCounts[r.status] || 0) + 1;
       if (r.ok) ok++; else errors++;
@@ -59,7 +73,7 @@ const rssAfter = await rss();
 latencies.sort((a, b) => a - b);
 const pct = (p) => latencies.length ? +latencies[Math.min(latencies.length - 1, Math.floor(latencies.length * p))].toFixed(2) : null;
 const result = {
-  name, url, connections, durationS,
+  name, url, connections, durationS, spreadIp,
   platform: process.platform, arch: process.arch, node: process.version, cpus: os.cpus().length,
   requests: latencies.length, ok, errors, statusCounts,
   reqPerSec: +(latencies.length / elapsed).toFixed(1),
