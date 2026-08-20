@@ -81,8 +81,13 @@ npm run infra -- reset redis --yes   # wipe that service's data
 
 ## Run
 
-* Double-click **`start.cmd`** (or pin a shortcut to it) — the Windows
-  equivalent of the Dock shortcut. Or `.\start.ps1`, or `npm start`.
+* Double-click **`start.cmd`** — the Windows equivalent of the Dock shortcut.
+  Or `.\start.ps1`, or `npm start`. `npm run win:shortcut` creates a
+  **"Tenant AI" shortcut on the Desktop and in the Start Menu** (target:
+  `powershell -File start.ps1`, so Windows allows pinning it); right-click →
+  *Pin to taskbar* once — scripts can't pin on Windows 11. It starts infra,
+  migrations, build, ngrok (when `PUBLIC_URL` is a real domain; a localhost
+  `PUBLIC_URL` skips the tunnel), the three servers, and opens the dashboard.
 * Relaunching while it's running means **restart** (same as the Mac).
 * Ctrl-C in the window stops all three servers; the API server drains active
   calls first (`SHUTDOWN_GRACE_MS`, default 120 s).

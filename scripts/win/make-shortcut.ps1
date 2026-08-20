@@ -1,0 +1,32 @@
+# Create the "Tenant AI" shortcut (Desktop + Start Menu) that starts / restarts
+# the whole stack: native Postgres + Redis, migrations, build, ngrok (when
+# PUBLIC_URL is a real domain), the three servers, and opens the dashboard.
+# Clicking it while the app already runs = restart (takeover), same as the Mac
+# Dock shortcut. Windows 11 does not let scripts pin to the taskbar: right-click
+# the Desktop shortcut -> "Pin to taskbar" once.
+#
+#   npm run win:shortcut            (or: powershell -ExecutionPolicy Bypass -File scripts\win\make-shortcut.ps1)
+param([string]$Name = 'Tenant AI')
+$ErrorActionPreference = 'Stop'
+$root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+$ps = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
+$desktop = [Environment]::GetFolderPath('Desktop')          # honours OneDrive-redirected desktops
+$startMenu = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs"
+$icon = Get-ChildItem "$root\apps\dashboard\public" -Include *.ico -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+if (-not $icon) { $icon = "$env:SystemRoot\System32\imageres.dll,1" }
+
+$ws = New-Object -ComObject WScript.Shell
+foreach ($dir in @($desktop, $startMenu)) {
+  $path = Join-Path $dir "$Name.lnk"
+  $s = $ws.CreateShortcut($path)
+  $s.TargetPath = $ps
+  $s.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$root\start.ps1`""
+  $s.WorkingDirectory = $root
+  $s.Description = 'Tenant AI - start / restart the whole stack (infra, servers, ngrok, dashboard)'
+  $s.IconLocation = $icon
+  $s.WindowStyle = 1
+  $s.Save()
+  "created $path"
+}
+""
+"Pin it: right-click '$desktop\$Name.lnk' -> Pin to taskbar (Windows does not allow scripts to do this)."

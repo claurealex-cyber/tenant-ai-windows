@@ -310,7 +310,11 @@ if (!flag("no-build")) {
 
 const PUBLIC_URL = process.env.PUBLIC_URL || "";
 const ngrokBin = process.env.NGROK_PATH || which("ngrok");
-if (!flag("no-ngrok") && PUBLIC_URL && ngrokBin) {
+// A localhost PUBLIC_URL means "no public tunnel yet" — don't hand it to ngrok.
+const publicIsLocal = /^https?:\/\/(localhost|127\.0\.0\.1|\[?::1\]?)(:|\/|$)/i.test(PUBLIC_URL);
+if (!flag("no-ngrok") && PUBLIC_URL && publicIsLocal) {
+  log(`ℹ PUBLIC_URL is ${PUBLIC_URL} (local) — no ngrok tunnel. Set it to this instance's ngrok domain to start one.`);
+} else if (!flag("no-ngrok") && PUBLIC_URL && ngrokBin) {
   const domain = PUBLIC_URL.replace(/^https?:\/\//, "").replace(/\/+$/, "");
   let tunnels = "";
   try {
