@@ -282,7 +282,7 @@ describe("POST /api/admin/phone-system", () => {
 
     expect(mockSpawn).toHaveBeenCalledWith(
       "ngrok",
-      expect.arrayContaining(["http", "--url=example.ngrok-free.dev", "3001"]),
+      expect.arrayContaining(["http", "--domain=example.ngrok-free.dev", "3001"]),
       expect.objectContaining({ detached: true })
     );
     expect(result.ready).toBe(true);

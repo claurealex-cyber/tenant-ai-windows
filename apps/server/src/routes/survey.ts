@@ -106,7 +106,7 @@ function messagePage(title: string, message: string): string {
 }
 
 function renderForm(
-  token: string,
+  action: string,
   propertyName: string,
   values: Record<string, string>,
   errors: string[],
@@ -139,7 +139,7 @@ function renderForm(
       <h1>Rental Application</h1>
       <p class="sub">${escapeHtml(propertyName)} — takes about 2 minutes.</p>
       ${errBlock}
-      <form method="POST" action="/survey/${escapeHtml(token)}">
+      <form method="POST" action="${escapeHtml(action)}">
         ${rows}
         <button type="submit">Submit application</button>
       </form>
@@ -188,10 +188,129 @@ export async function surveyRoutes(server: FastifyInstance): Promise<void> {
   // visit (e.g. someone trimming an SMS link, or ngrok's "Visit Site" button)
   // should get a human page, not a JSON 404.
   server.get("/", async (_request, reply: FastifyReply) => {
-    return reply
-      .type("text/html")
-      .send(messagePage("Tenant AI", "There's nothing at this address itself. If you received a link by text message, open the complete link from that message."));
+    return reply.type("text/html").send(pageShell(
+      "Tenant AI",
+      `<div class="card center"><h1>Tenant AI</h1>
+        <p class="sub" style="margin-top:8px">If you received a link by text message, open the complete link from that message.</p>
+        <p style="margin-top:18px"><a href="/apply" style="color:#2563eb;font-weight:600">Apply for an apartment &rarr;</a></p></div>`,
+    ));
   });
+
+  // ── walk-up applications (no SMS invite) ─────────────────────────────────
+  // Same form, validation, duplicate policy and owner forwarding as the SMS
+  // path; channel "web_link" and the typed (unverified) phone instead of the
+  // invite's verified one.
+
+  function normalizePhone(raw: string): string {
+    const digits = raw.replace(/[^0-9+]/g, "");
+    if (/^[+][0-9]{8,15}$/.test(digits)) return digits;
+    if (/^1[0-9]{10}$/.test(digits)) return `+${digits}`;
+    if (/^[0-9]{10}$/.test(digits)) return `+1${digits}`;
+    return digits;
+  }
+
+  server.get("/apply", surveyRateLimit, async (_request, reply: FastifyReply) => {
+    if (globalBudgetExceeded()) return reply.code(429).send("Too many requests");
+    const properties = await prisma.property.findMany({
+      where: { isActive: true },
+      select: { id: true, name: true, address: true },
+      orderBy: { name: "asc" },
+    });
+    if (properties.length === 0) {
+      return reply.type("text/html").send(messagePage("Applications closed", "We are not accepting applications right now. Please check back soon."));
+    }
+    if (properties.length === 1) {
+      return reply.redirect(`/apply/${properties[0]!.id}`);
+    }
+    const list = properties
+      .map((p) => `<p style="margin:10px 0"><a href="/apply/${escapeHtml(p.id)}" style="color:#2563eb;font-weight:600">${escapeHtml(p.name)}</a><br><span class="sub">${escapeHtml(p.address)}</span></p>`)
+      .join("");
+    return reply.type("text/html").send(pageShell("Apply", `<div class="card"><h1>Which property?</h1><p class="sub">Pick the property you want to apply for.</p>${list}</div>`));
+  });
+
+  server.get<{ Params: { propertyId: string } }>("/apply/:propertyId", surveyRateLimit, async (request, reply: FastifyReply) => {
+    if (globalBudgetExceeded()) return reply.code(429).send("Too many requests");
+    const property = await prisma.property.findFirst({
+      where: { id: request.params.propertyId, isActive: true },
+      select: { id: true, name: true },
+    });
+    if (!property) {
+      return reply.code(404).type("text/html").send(messagePage("Not found", "This property is not accepting applications."));
+    }
+    return reply.type("text/html").send(renderForm(`/apply/${property.id}`, property.name, {}, []));
+  });
+
+  server.post<{ Params: { propertyId: string }; Body: Record<string, unknown> }>(
+    "/apply/:propertyId",
+    surveyRateLimit,
+    async (request, reply: FastifyReply) => {
+      if (globalBudgetExceeded()) return reply.code(429).send("Too many requests");
+      const property = await prisma.property.findFirst({
+        where: { id: request.params.propertyId, isActive: true },
+        select: { id: true, name: true },
+      });
+      if (!property) {
+        return reply.code(404).type("text/html").send(messagePage("Not found", "This property is not accepting applications."));
+      }
+      const { values, errors } = validate(request.body ?? {});
+      if (errors.length > 0) {
+        return reply.code(400).type("text/html").send(renderForm(`/apply/${property.id}`, property.name, values, errors));
+      }
+      const phone = normalizePhone(values.contact_phone!);
+
+      try {
+        const applicationId = await prisma.$transaction(async (tx) => {
+          const thirtyDaysAgo = new Date(Date.now() - 30 * 86_400_000);
+          const dup = await tx.application.findFirst({
+            where: {
+              propertyId: property.id,
+              callerPhone: phone,
+              channel: { in: ["sms_link", "web_link"] },
+              status: { in: ["completed", "reviewed"] },
+              completedAt: { gt: thirtyDaysAgo },
+            },
+          });
+          if (dup) throw new DuplicateApplicationError("duplicate");
+
+          const app = await tx.application.create({
+            data: {
+              propertyId: property.id,
+              channel: "web_link",
+              status: "completed",
+              completedAt: new Date(),
+              callerPhone: phone, // typed by the applicant — unverified on the web path
+              fullName: values.full_name,
+              email: values.email,
+              dateOfBirth: encrypt(values.dob!),
+              employer: values.employer,
+              monthlyIncome: values.gross_monthly_income,
+              customResponses: {
+                contact_phone: values.contact_phone,
+                bedrooms_needed: values.bedrooms_needed,
+                household_size: values.household_size,
+                employment_start_date: values.employment_start_date,
+                employed_one_year: values.employed_one_year,
+                time_at_current_address: values.time_at_current_address,
+              } as Prisma.InputJsonValue,
+            },
+          });
+          return app.id;
+        });
+
+        reply.type("text/html").send(messagePage("Application received!", "Thanks — we have your application and will be in touch soon."));
+        forwardSurveySummary(applicationId).catch((err) =>
+          request.log.error(`survey forward failed: ${err}`),
+        );
+        return reply;
+      } catch (err) {
+        if (err instanceof DuplicateApplicationError) {
+          return reply.code(200).type("text/html").send(messagePage("Already on file", "We already have a recent application from you — no need to submit again. We'll be in touch!"));
+        }
+        request.log.error(`web apply failed: ${err}`);
+        return reply.code(500).type("text/html").send(messagePage("Something went wrong", "We couldn't save your application just now. Please go back and resubmit."));
+      }
+    },
+  );
 
   server.get<{ Params: { token: string } }>(
     "/survey/:token",
@@ -217,7 +336,7 @@ export async function surveyRoutes(server: FastifyInstance): Promise<void> {
       }
       return reply
         .type("text/html")
-        .send(renderForm(token, invite.property.name, { contact_phone: invite.phone }, []));
+        .send(renderForm(`/survey/${token}`, invite.property.name, { contact_phone: invite.phone }, []));
     },
   );
 
@@ -249,7 +368,7 @@ export async function surveyRoutes(server: FastifyInstance): Promise<void> {
       if (errors.length > 0) {
         // Re-render with entered values preserved — a tenant who typed 11
         // fields on a phone will not do it twice.
-        return reply.code(400).type("text/html").send(renderForm(token, invite.property.name, values, errors));
+        return reply.code(400).type("text/html").send(renderForm(`/survey/${token}`, invite.property.name, values, errors));
       }
 
       try {

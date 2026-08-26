@@ -116,7 +116,7 @@ export async function ownerRoutes(server: FastifyInstance): Promise<void> {
 
       const apps = await prisma.application.findMany({
         where: {
-          channel: { in: ["sms_link", "voice"] },
+          channel: { in: ["sms_link", "web_link", "voice"] },
           status: { in: ["completed", "reviewed"] },
         },
         orderBy: { completedAt: "desc" },

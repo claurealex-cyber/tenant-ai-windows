@@ -25,7 +25,7 @@ const listSelect = {
 function buildWhere(params: URLSearchParams) {
   // Voice applications ask the same questions and store the same shape — the
   // "survey responses" view covers both intake channels.
-  const where: Record<string, unknown> = { channel: { in: ["sms_link", "voice"] } };
+  const where: Record<string, unknown> = { channel: { in: ["sms_link", "web_link", "voice"] } };
 
   const propertyId = params.get("propertyId");
   if (propertyId) where.propertyId = propertyId;
