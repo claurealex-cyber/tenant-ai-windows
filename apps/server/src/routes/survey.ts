@@ -184,6 +184,15 @@ const surveyRateLimit = {
 };
 
 export async function surveyRoutes(server: FastifyInstance): Promise<void> {
+  // The public root: webhooks and tokened links live on this host, so a bare
+  // visit (e.g. someone trimming an SMS link, or ngrok's "Visit Site" button)
+  // should get a human page, not a JSON 404.
+  server.get("/", async (_request, reply: FastifyReply) => {
+    return reply
+      .type("text/html")
+      .send(messagePage("Tenant AI", "There's nothing at this address itself. If you received a link by text message, open the complete link from that message."));
+  });
+
   server.get<{ Params: { token: string } }>(
     "/survey/:token",
     surveyRateLimit,
