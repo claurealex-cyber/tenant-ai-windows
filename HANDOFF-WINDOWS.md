@@ -44,7 +44,26 @@ No admin rights, no services, nothing under Program Files; all state in
 | M7 soak | **plumbing done**, 72 h run pending | `npm run win:autostart` → Task Scheduler "Tenant AI" (at log on, hidden, crash-restart loop via `scripts/win/autostart.ps1`) + "Tenant AI soak" (`scripts/stress/soak.mjs`, 1 sample/min → `parity/win32/soak.jsonl`, `--report`). Verified: task start → healthy in 40 s; API killed → launcher exits 1 → supervisor restarts the stack (5 s) → healthy; foreground `start.cmd` takeover → supervisor stands down (task `Ready`). Power settings (Fast Startup off, never sleep) need the UAC half of the installer. Still to do: one real reboot + the 72 h recording |
 | M8 sign-off + CI | **CI green** (run #6, `653673a`) | `.github/workflows/ci.yml` on `windows-latest` (native Postgres + Redis via `infra.mjs`, build, full vitest, shutdown drill) in github.com/claurealex-cyber/tenant-ai-windows; run #1 failed (postgres.exe refuses an admin token → DB now created with the `pg` client), run #2 got to tests (fresh-DB billing-cycle → test fixed), run #3 got to the shutdown drill, which exposed two real bugs: the drill process itself could abort on exit (libuv `UV_HANDLE_CLOSING`, Windows — child handles now torn down before exit) and **the API server died with exit 1 when a shutdown landed while jobs were still registering** (BullMQ `'error'` with no listener → fixed in `scheduler.ts`: refuse registration while closing + error listeners on every Queue/Worker; 20/20 cycles clean after). Mac parity (`parity-diff`) out of scope: separate instances |
 
-## What changed in this branch (all cross-platform, Mac behavior unchanged)
+## Mac link plan (added 2026-08-26): control + settings sync over the tailnet
+
+Goal: from this Windows machine, start/stop the Mac instance and pull its app
+settings, over Tailscale only (nothing internet-exposed). Facts established:
+Mac = `alejandros-mac-mini` / 100.104.222.121, online, direct connection; its
+Docker Postgres 5433, Redis 6380 and dashboard 3000 are **already reachable**
+over the tailnet; SSH 22 is off; `SystemConfig.value` is **encrypted with each
+instance's own `PII_ENCRYPTION_KEY`**, so sync = decrypt with the Mac's key,
+re-encrypt with ours (raw row copy can never work).
+
+| Gate | Work | Exit gate |
+|---|---|---|
+| ML0 reachability | done — peers + port probes recorded above | — |
+| ML1 read-only link | `npm run mac:open` (Mac dashboard via tailnet); `npm run mac:settings -- --diff`: read the Mac's `SystemConfig` over 100.104.222.121:5433, compare key names + timestamps with ours (no decryption needed for the diff) | diff of both instances' settings keys prints; zero writes anywhere |
+| ML2 remote control | **User: System Settings → General → Sharing → Remote Login ON** on the Mac. Windows: generate an SSH key, authorize it once, then `npm run mac:start / mac:stop / mac:status` (runs `start.sh` / stop-file / health probe over `ssh alejandros-mac-mini`) | cold Mac (app stopped) → `mac:start` from Windows → Mac `/health` ok via tailnet; `mac:stop` stops it; keys only, no passwords stored |
+| ML3 settings sync | `mac:settings -- --pull`: fetch the Mac's `PII_ENCRYPTION_KEY` over SSH (never stored outside `.local/`), decrypt Mac values, re-encrypt with ours, upsert — after showing the ML1 diff and with per-instance keys excluded by default (public URL, phone numbers, macOS-relay settings); writes a timestamped backup of local rows first; re-run → empty diff (idempotent) | settings pulled; excluded list respected; backup exists; app picks the values up (config cache TTL 60 s) |
+| ML4 ops polish | optional scheduled nightly `--diff` report (not auto-apply); README-WINDOWS section; security note: the Mac's Postgres/Redis are open to the whole tailnet with dev creds — fine for a 4-device personal tailnet, revisit before adding devices/users | docs merged; one scheduled diff run recorded |
+
+Order: ML1 today (no Mac changes needed) → ML2 blocked only on the Remote
+Login toggle → ML3 right after (needs ML2's SSH for the key) → ML4 cleanup.
 
 - **`scripts/infra.mjs`** (new) — native infra manager; `scripts/lib/start-detached.ps1` (Windows: `CreateProcess` with `bInheritHandles=false` so services never inherit a parent pipe — Node's `spawn` would, and a CI runner / PowerShell pipe then hangs until the service dies); `scripts/lib/dotenv.mjs` shared `.env` reader; root `embedded-postgres` devDependency; `npm run infra*` scripts; `.local/` gitignored.
 - `scripts/launch.mjs` + `start.cmd` + `start.ps1` — one launcher for both OSes; `--infra=native|docker|none` (default native on Windows, docker elsewhere; `--no-docker` = `--infra=none`); any server dying now stops the stack with exit 1 (so a supervisor restarts all three together).
