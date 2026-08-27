@@ -14,6 +14,12 @@ laptop and starved Chrome/Edge; the three native processes take ~100 MB
 
 ## One-time setup
 
+**Shortcut: double-click `INSTALL.cmd`** (needs Node 20+ on the machine, nothing
+else) — it runs `scripts\win\install.ps1`: dependencies, a fresh `.env` with
+generated secrets, native Postgres/Redis, migrations + demo seed, build, and
+the desktop shortcut. Then `start.cmd` serves everything. The steps below are
+the manual/an elevated extras version.
+
 Run from an **elevated** PowerShell once (each line is idempotent):
 
 ```powershell
